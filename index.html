@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOUNCE KILL - 3D Tactical FPS</title>
+
+    <!-- Three.js r128 Core -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Three.js Controls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Post-Processing Pipeline (Loaded in strict dependency order) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <script>
+        // Global handler to catch and report any CDN loading anomalies without halting the runtime
+        window.addEventListener('error', function (e) {
+            if (e.target && e.target.tagName === 'SCRIPT') {
+                console.warn('[CDN Fallback Notice] External script failed to load:', e.target.src);
+            }
+        }, true);
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #040609;
+            font-family: 'Courier New', Courier, monospace;
+            color: #00F0FF;
+        }
+
+        /* Screen-space camera shake */
+        body.screen-shake {
+            animation: screenShake 0.22s cubic-bezier(.36,.07,.19,.97) both;
+        }
+
+        @keyframes screenShake {
+            10%, 90% { transform: translate3d(-3px, -2px, 0); }
+            20%, 80% { transform: translate3d(4px, 3px, 0); }
+            30%, 50%, 70% { transform: translate3d(-5px, -3px, 0); }
+            40%, 60% { transform: translate3d(5px, 3px, 0); }
+        }
+
+        /* 3D Viewport */
+        #render-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            z-index: 1;
+            cursor: crosshair;
+        }
+
+        /* HUD Overlay */
+        #hud-root {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Top-Left Level & Economy Status */
+        .level-status-panel {
+            position: absolute;
+            top: 24px;
+            left: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .sector-title {
+            font-size: 18px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #00F0FF;
+            text-shadow: 0 0 10px #00F0FF;
+        }
+
+        .targets-badge {
+            font-size: 13px;
+            font-weight: bold;
+            color: #FF0D47;
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 8px #FF0D47;
+        }
+
+        .tokens-badge {
+            font-size: 14px;
+            font-weight: bold;
+            color: #FFD700;
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 8px rgba(255, 215, 0, 0.6);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Dynamic Crosshair */
+        .crosshair-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .crosshair {
+            position: relative;
+            width: 24px;
+            height: 24px;
+            transition: all 0.15s ease-out;
+        }
+
+        .crosshair .dot {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 4px;
+            height: 4px;
+            background: #00F0FF;
+            box-shadow: 0 0 8px #00F0FF, 0 0 16px #00F0FF;
+        }
+
+        .crosshair .tick {
+            position: absolute;
+            background: #00F0FF;
+            box-shadow: 0 0 6px #00F0FF;
+        }
+
+        .crosshair .tick.top { top: 0; left: 11px; width: 2px; height: 7px; }
+        .crosshair .tick.bottom { bottom: 0; left: 11px; width: 2px; height: 7px; }
+        .crosshair .tick.left { top: 11px; left: 0; width: 7px; height: 2px; }
+        .crosshair .tick.right { top: 11px; right: 0; width: 7px; height: 2px; }
+
+        .crosshair.lethal .dot,
+        .crosshair.lethal .tick {
+            background: #FF0D47 !important;
+            box-shadow: 0 0 12px #FF0D47, 0 0 24px #FF0D47 !important;
+        }
+        .crosshair.lethal { transform: scale(1.35); }
+
+        .crosshair.dud .dot,
+        .crosshair.dud .tick {
+            background: #8899aa !important;
+            box-shadow: none !important;
+        }
+        .crosshair.dud { transform: scale(0.85); }
+
+        #prediction-label {
+            margin-top: 24px;
+            font-size: 13px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 10px rgba(0, 0, 0, 0.95);
+            display: none;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        /* Vitals (Bottom Left) */
+        .vitals-panel {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .health-bar-bg {
+            width: 260px;
+            height: 14px;
+            background: rgba(10, 20, 30, 0.85);
+            border: 1px solid rgba(0, 240, 255, 0.6);
+            padding: 2px;
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
+        }
+
+        .health-fill {
+            height: 100%;
+            width: 100%;
+            background: #00F0FF;
+            box-shadow: 0 0 10px #00F0FF;
+            transition: width 0.2s ease-out, background 0.1s;
+        }
+
+        .health-fill.flash-crimson {
+            background: #FF0D47 !important;
+            box-shadow: 0 0 16px #FF0D47 !important;
+        }
+
+        .health-text {
+            font-size: 16px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-shadow: 0 0 8px #00F0FF;
+        }
+
+        .focus-text {
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: #88ccee;
+            margin-top: 6px;
+            font-weight: 600;
+            text-shadow: 0 0 6px rgba(0, 240, 255, 0.4);
+            transition: color 0.15s ease-out;
+        }
+
+        .focus-bar-bg {
+            width: 260px;
+            height: 9px;
+            background: rgba(10, 20, 30, 0.85);
+            border: 1px solid rgba(0, 240, 255, 0.45);
+            padding: 1px;
+            box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+        }
+
+        .focus-fill {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #0099cc, #00F0FF);
+            box-shadow: 0 0 10px #00F0FF;
+            transition: width 0.08s linear;
+        }
+
+        .focus-fill.focus-active {
+            background: linear-gradient(90deg, #00F0FF, #85f8ff);
+            box-shadow: 0 0 16px #00F0FF, 0 0 28px #00F0FF;
+            animation: focus-fill-glow 0.8s infinite alternate;
+        }
+
+        @keyframes focus-fill-glow {
+            from { filter: brightness(1.0); }
+            to { filter: brightness(1.35); }
+        }
+
+        /* Focus Mode Screen-Space Effect */
+        .focus-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 45;
+            opacity: 0;
+            transition: opacity 0.22s ease-out;
+            box-shadow: inset 0 0 120px 40px rgba(0, 240, 255, 0.35), inset 0 0 220px 100px rgba(5, 12, 28, 0.8);
+        }
+
+        .focus-overlay.active {
+            opacity: 1;
+            animation: focus-pulse 2s infinite ease-in-out;
+        }
+
+        .focus-overlay::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, transparent 35%, rgba(0, 240, 255, 0.06) 75%, rgba(0, 100, 220, 0.22) 100%);
+            mix-blend-mode: screen;
+            pointer-events: none;
+        }
+
+        .focus-overlay::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            box-shadow: inset 5px 0 0 rgba(0, 240, 255, 0.65), inset -5px 0 0 rgba(255, 13, 71, 0.55);
+            pointer-events: none;
+        }
+
+        @keyframes focus-pulse {
+            0%, 100% {
+                box-shadow: inset 0 0 120px 40px rgba(0, 240, 255, 0.32), inset 0 0 220px 100px rgba(5, 12, 28, 0.78);
+            }
+            50% {
+                box-shadow: inset 0 0 155px 55px rgba(0, 240, 255, 0.44), inset 0 0 240px 115px rgba(5, 12, 28, 0.88);
+            }
+        }
+
+        /* Ammo & Equipped Weapon (Bottom Right) */
+        .ammo-panel {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            text-align: right;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .weapon-name-badge {
+            font-size: 13px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            margin-bottom: 2px;
+        }
+
+        .ammo-text {
+            font-size: 42px;
+            font-weight: bold;
+            color: #00F0FF;
+            text-shadow: 0 0 12px #00F0FF;
+            line-height: 1;
+        }
+
+        .ammo-subtext {
+            font-size: 13px;
+            color: rgba(100, 150, 180, 0.8);
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* Score & Combo (Top Right) */
+        .score-panel {
+            position: absolute;
+            top: 24px;
+            right: 28px;
+            text-align: right;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .score-text {
+            font-size: 26px;
+            font-weight: bold;
+            color: #00F0FF;
+            text-shadow: 0 0 10px #00F0FF;
+        }
+
+        .combo-container { display: none; }
+
+        .combo-text {
+            font-size: 18px;
+            font-weight: bold;
+            color: #FF0D47;
+            text-shadow: 0 0 10px #FF0D47;
+            margin-bottom: 4px;
+        }
+
+        .combo-bar-bg {
+            width: 160px;
+            height: 8px;
+            background: rgba(15, 20, 25, 0.85);
+            border: 1px solid rgba(255, 13, 71, 0.6);
+            padding: 1px;
+            margin-left: auto;
+        }
+
+        .combo-fill {
+            height: 100%;
+            width: 100%;
+            background: #FF0D47;
+            box-shadow: 0 0 8px #FF0D47;
+        }
+
+        /* Style Rank System (Top Right) */
+        .style-panel {
+            margin-top: 8px;
+            background: rgba(10, 18, 28, 0.88);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            padding: 8px 12px;
+            box-shadow: 0 0 14px rgba(0, 240, 255, 0.15);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            width: 220px;
+            margin-left: auto;
+        }
+
+        .style-rank-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .style-rank-badge {
+            width: 38px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            border: 2px solid #00F0FF;
+            color: #00F0FF;
+            text-shadow: 0 0 10px #00F0FF;
+            box-shadow: inset 0 0 8px rgba(0, 240, 255, 0.4);
+            transition: all 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .style-rank-badge.rank-up {
+            transform: scale(1.35) rotate(-6deg);
+            box-shadow: 0 0 25px currentColor;
+        }
+
+        .style-rank-badge.rank-d { color: #8899aa; border-color: #8899aa; text-shadow: 0 0 6px #8899aa; }
+        .style-rank-badge.rank-c { color: #00F0FF; border-color: #00F0FF; text-shadow: 0 0 8px #00F0FF; }
+        .style-rank-badge.rank-b { color: #00FF88; border-color: #00FF88; text-shadow: 0 0 10px #00FF88; }
+        .style-rank-badge.rank-a { color: #FFAA00; border-color: #FFAA00; text-shadow: 0 0 12px #FFAA00; }
+        .style-rank-badge.rank-s { color: #FF0D47; border-color: #FF0D47; text-shadow: 0 0 14px #FF0D47; }
+        .style-rank-badge.rank-ss {
+            color: #FFD700;
+            border-color: #FFD700;
+            text-shadow: 0 0 16px #FFD700, 0 0 30px #FF0D47;
+            animation: ss-pulse 0.8s infinite alternate;
+        }
+
+        @keyframes ss-pulse {
+            from { transform: scale(1.0); }
+            to { transform: scale(1.1); }
+        }
+
+        .style-rank-info {
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+        }
+
+        .style-rank-title {
+            font-size: 13px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            color: #00F0FF;
+        }
+
+        .style-multiplier {
+            font-size: 11px;
+            color: #a0c4de;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .style-bar-bg {
+            width: 100%;
+            height: 5px;
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            overflow: hidden;
+        }
+
+        .style-bar-fill {
+            height: 100%;
+            width: 100%;
+            background: #00F0FF;
+            box-shadow: 0 0 8px #00F0FF;
+            transition: width 0.08s linear, background-color 0.2s;
+        }
+
+        /* Trick Pills Feed */
+        .style-tricks-feed {
+            margin-top: 8px;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            opacity: 0;
+            transition: opacity 0.25s ease-out;
+        }
+
+        .trick-pill {
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            padding: 3px 8px;
+            background: rgba(10, 25, 40, 0.88);
+            border: 1px solid #FFD700;
+            color: #FFD700;
+            box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+            border-radius: 2px;
+        }
+
+        .crosshair.double-locked .dot,
+        .crosshair.double-locked .tick {
+            background: #FFAA00 !important;
+            box-shadow: 0 0 12px #FFAA00, 0 0 24px #FFAA00 !important;
+        }
+        .crosshair.double-locked { transform: scale(1.45); }
+
+        /* Bank Shot Banner */
+        .banner-container {
+            position: absolute;
+            top: 75px;
+            left: 50%;
+            transform: translate(-50%, 0);
+            text-align: center;
+        }
+
+        .banner-text {
+            font-size: 28px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            opacity: 0;
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-shadow: 0 0 16px currentColor;
+        }
+
+        /* =====================================================================
+           CYBERPUNK MENUS & MODALS
+           ===================================================================== */
+        .cyber-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(4, 6, 9, 0.92);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            pointer-events: all;
+        }
+
+        .cyber-card {
+            background: rgba(10, 16, 24, 0.96);
+            border: 2px solid #00F0FF;
+            box-shadow: 0 0 35px rgba(0, 240, 255, 0.35);
+            padding: 40px;
+            text-align: center;
+            max-width: 640px;
+            width: 90%;
+            position: relative;
+        }
+
+        .cyber-title {
+            font-size: 46px;
+            letter-spacing: 5px;
+            color: #00F0FF;
+            text-shadow: 0 0 18px #00F0FF;
+            margin-bottom: 8px;
+        }
+
+        .cyber-subtitle {
+            font-size: 13px;
+            letter-spacing: 2.5px;
+            color: #88aacc;
+            margin-bottom: 24px;
+        }
+
+        .cyber-btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            width: 280px;
+            margin: 0 auto;
+        }
+
+        .cyber-btn {
+            background: transparent;
+            border: 2px solid #00F0FF;
+            color: #00F0FF;
+            font-family: inherit;
+            font-size: 16px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            padding: 14px 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+        }
+
+        .cyber-btn:hover {
+            background: #00F0FF;
+            color: #040609;
+            box-shadow: 0 0 24px #00F0FF;
+            transform: scale(1.03);
+        }
+
+        .cyber-btn.btn-crimson {
+            border-color: #FF0D47;
+            color: #FF0D47;
+            box-shadow: 0 0 12px rgba(255, 13, 71, 0.25);
+        }
+
+        .cyber-btn.btn-crimson:hover {
+            background: #FF0D47;
+            color: #fff;
+            box-shadow: 0 0 24px #FF0D47;
+        }
+
+        /* Weapon Store Modal */
+        #store-modal .cyber-card {
+            max-width: 900px;
+            width: 94%;
+        }
+
+        .store-header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            border-bottom: 1px solid rgba(0, 240, 255, 0.3);
+            padding-bottom: 12px;
+        }
+
+        .store-balance-tag {
+            font-size: 18px;
+            font-weight: bold;
+            color: #FFD700;
+            text-shadow: 0 0 8px #FFD700;
+        }
+
+        .store-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+
+        .store-card {
+            background: rgba(16, 22, 32, 0.85);
+            border: 1px solid rgba(0, 240, 255, 0.4);
+            padding: 20px;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: border 0.2s, box-shadow 0.2s;
+        }
+
+        .store-card.equipped {
+            border-color: #00F0FF;
+            box-shadow: 0 0 18px rgba(0, 240, 255, 0.4);
+        }
+
+        .store-weapon-category {
+            font-size: 11px;
+            color: #88aacc;
+            letter-spacing: 1.5px;
+            margin-bottom: 4px;
+        }
+
+        .store-weapon-name {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+
+        .store-weapon-desc {
+            font-size: 12px;
+            line-height: 1.5;
+            color: #99b4cb;
+            margin-bottom: 16px;
+            min-height: 48px;
+        }
+
+        .store-stats-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+            font-size: 11px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stat-bar-bg {
+            width: 110px;
+            height: 6px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+        }
+
+        .stat-bar-fill { height: 100%; }
+
+        .store-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 12px;
+        }
+
+        .store-price-tag {
+            font-size: 14px;
+            font-weight: bold;
+            color: #FFD700;
+        }
+
+        .store-action-btn {
+            background: transparent;
+            border: 1px solid #00F0FF;
+            color: #00F0FF;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 8px 14px;
+            cursor: pointer;
+            letter-spacing: 1px;
+        }
+
+        .store-action-btn.btn-equipped {
+            border-color: #556677;
+            color: #8899aa;
+            cursor: default;
+        }
+
+        .store-action-btn.btn-equip {
+            border-color: #00F0FF;
+            color: #00F0FF;
+        }
+        .store-action-btn.btn-equip:hover { background: #00F0FF; color: #000; }
+
+        .store-action-btn.btn-buy {
+            border-color: #FFD700;
+            color: #FFD700;
+        }
+        .store-action-btn.btn-buy:hover { background: #FFD700; color: #000; }
+
+        .store-action-btn.btn-disabled {
+            border-color: #444;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        /* =====================================================================
+           ARENA SELECTION & PROGRESSION STYLES (THE FIRST 5 GAMES RULE)
+           ===================================================================== */
+        .map-progression-badge {
+            background: rgba(10, 16, 26, 0.85);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            padding: 10px 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
+        }
+
+        .map-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(225px, 1fr));
+            gap: 16px;
+            margin-bottom: 8px;
+        }
+
+        .map-card {
+            background: rgba(12, 18, 26, 0.94);
+            border: 2px solid rgba(0, 240, 255, 0.35);
+            padding: 16px;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: all 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            cursor: pointer;
+        }
+
+        .map-card:hover {
+            border-color: #00F0FF;
+            box-shadow: 0 0 22px rgba(0, 240, 255, 0.35);
+            transform: translateY(-2px);
+        }
+
+        .map-card.selected {
+            border-color: #00FF88 !important;
+            box-shadow: 0 0 24px rgba(0, 255, 136, 0.45) !important;
+        }
+
+        .map-card.selected::before {
+            content: 'ACTIVE SECTOR';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            font-size: 9px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            background: #00FF88;
+            color: #040609;
+            padding: 2px 6px;
+            border-radius: 2px;
+        }
+
+        .map-card.locked-card {
+            opacity: 0.65;
+            filter: grayscale(0.5);
+        }
+
+        .map-card-thumb {
+            width: 100%;
+            height: 120px;
+            background: rgba(4, 8, 14, 0.95);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .map-badge-surface {
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            padding: 3px 6px;
+            display: inline-block;
+            margin-bottom: 6px;
+            border-radius: 2px;
+        }
+
+        .map-card-name {
+            font-size: 16px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .map-card-subtitle {
+            font-size: 11px;
+            color: #88aacc;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .map-card-desc {
+            font-size: 11px;
+            color: #99b4cb;
+            line-height: 1.45;
+            margin-bottom: 12px;
+            min-height: 48px;
+        }
+
+        .map-stats-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 10px;
+            color: #88aacc;
+            margin-bottom: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 8px;
+        }
+
+        .map-stat-item {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .map-select-btn {
+            background: transparent;
+            border: 1px solid #00F0FF;
+            color: #00F0FF;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-align: center;
+            width: 100%;
+        }
+
+        .map-select-btn:hover {
+            background: #00F0FF;
+            color: #040609;
+        }
+
+        .map-select-btn.btn-active {
+            border-color: #00FF88;
+            color: #00FF88;
+            background: rgba(0, 255, 136, 0.15);
+        }
+
+        /* =====================================================================
+           VISUAL THEME PRESET SWITCHER STYLES
+           ===================================================================== */
+        .theme-preset-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(8, 14, 22, 0.88);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            padding: 10px 16px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .theme-pill {
+            background: rgba(16, 24, 34, 0.9);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            color: #88aacc;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: all 0.18s ease;
+            border-radius: 2px;
+        }
+
+        .theme-pill:hover {
+            border-color: #00F0FF;
+            color: #00F0FF;
+            background: rgba(0, 240, 255, 0.1);
+        }
+
+        .theme-pill.active {
+            border-color: #00FF88 !important;
+            color: #00FF88 !important;
+            background: rgba(0, 255, 136, 0.18) !important;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="render-canvas"></canvas>
+    <div id="focus-overlay" class="focus-overlay"></div>
+
+    <!-- 1. MAIN MENU SCREEN -->
+    <div id="main-menu" class="cyber-modal-overlay">
+        <div class="cyber-card" style="max-width: 680px;">
+            <h1 class="cyber-title">BOUNCE KILL</h1>
+            <div class="cyber-subtitle">TACTICAL RICOCHET PROTOCOL // REFLECT TO KILL</div>
+            <div id="menu-tokens" class="tokens-badge" style="justify-content: center; margin-bottom: 16px; font-size: 16px;">TOKENS: 0</div>
+            
+            <!-- Immediate Unrestricted Combat Sector Badge -->
+            <div id="menu-map-status" class="map-progression-badge" style="cursor: pointer;" title="Click to select Combat Arena">
+                <div id="map-status-text" style="font-size: 11px; font-weight: bold; letter-spacing: 2px; color: #88aacc;">
+                    TARGET COMBAT SECTOR // UNRESTRICTED ACCESS
+                </div>
+                <div id="map-active-label" style="font-size: 15px; color: #00F0FF; margin-top: 5px; letter-spacing: 1.5px; font-weight: bold; text-shadow: 0 0 10px #00F0FF;">
+                    THE BRUTALIST GRID
+                </div>
+                <div style="font-size: 10px; color: #00FF88; margin-top: 4px; letter-spacing: 1px;">
+                    [CLICK TO CHANGE ARENA]
+                </div>
+            </div>
+
+            <div class="cyber-btn-group" style="width: 320px;">
+                <button id="btn-play" class="cyber-btn">DEPLOY MISSION</button>
+                <button id="btn-map-select" class="cyber-btn" style="border-color: #88EEFF; color: #88EEFF;">ARENA SELECTION</button>
+                <button id="btn-store" class="cyber-btn">WEAPON ARMORY</button>
+                <button id="btn-how-to-play" class="cyber-btn">HOW TO PLAY</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. HOW TO PLAY MODAL -->
+    <div id="how-to-play-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card">
+            <h2 style="font-size: 28px; letter-spacing: 3px; margin-bottom: 12px; color: #00F0FF;">MISSION PROTOCOL</h2>
+            <div style="text-align: left; font-size: 13px; line-height: 1.8; color: #a0c0db; margin-bottom: 24px;">
+                <p>⚡ <strong>THE RICOCHET RULE:</strong> Direct shots on enemy mechs deal <span style="color: #FF0D47;">0 DAMAGE</span> and deflect harmlessly off defensive energy shields.</p>
+                <p>🔥 <strong>CRIMSON-HOT LETHALITY:</strong> Bullets that bounce off at least one wall or obstacle become supercharged ("Crimson-Hot") and inflict lethal instant damage.</p>
+                <p>🎯 <strong>PREDICTIVE LASER SIGHT:</strong> The laser sight projects bank angles. When an aligned ricochet targets an enemy, the laser snaps to <span style="color: #FF0D47;">CRIMSON</span>.</p>
+                <p>👟 <strong>TACTICAL SLIDE [C]:</strong> Press <kbd style="background:#111b24; padding:2px 6px; border:1px solid #00F0FF; border-radius:3px;">C</kbd> while moving (WASD) to initiate a high-momentum tactical slide. Drops eye level to 0.85m to duck beneath enemy line of sight and low cover.</p>
+                <p>⏳ <strong>FOCUS REFLEX [RMB / F]:</strong> Hold <kbd style="background:#111b24; padding:2px 6px; border:1px solid #00F0FF; border-radius:3px;">Right Mouse</kbd> or <kbd style="background:#111b24; padding:2px 6px; border:1px solid #00F0FF; border-radius:3px;">F</kbd> to enter Bullet Time. Dilates physics and hostiles to 0.3x speed with audio low-pass filtering, allowing surgical bank shot alignment.</p>
+                <p>⏸️ <strong>PAUSE & CURSOR [ESC / P]:</strong> Press <kbd style="background:#111b24; padding:2px 6px; border:1px solid #00F0FF; border-radius:3px;">ESC</kbd> or <kbd style="background:#111b24; padding:2px 6px; border:1px solid #00F0FF; border-radius:3px;">P</kbd> to pause the simulation, unlock the mouse cursor, and access the Armory or sector controls.</p>
+                <p>👑 <strong>STYLE CHAINS & BOUNCE TIERS:</strong> Multi-bounce bank shots elevate your Style Rank from <span style="color:#8899aa;">D</span> to <span style="color:#FFD700;">SS (SINGULARITY)</span> with up to <strong>6.0x Multipliers</strong>. Chain trick shots (+Slide Bank, +Reflex Execution, +Aerial Bank) for high-roller scores and bonus tokens!</p>
+                <p>🪙 <strong>ECONOMY & UPGRADES:</strong> Earn tokens with each stylish ricochet elimination to unlock heavy railguns and plasma scatter carbines in the Cybernetic Armory.</p>
+            </div>
+            <button id="btn-close-how-to" class="cyber-btn" style="width: 200px; margin: 0 auto;">ACKNOWLEDGE</button>
+        </div>
+    </div>
+
+    <!-- 2B. PAUSE MENU MODAL -->
+    <div id="pause-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card" style="max-width: 480px;">
+            <h2 style="font-size: 34px; letter-spacing: 4px; color: #00F0FF; margin-bottom: 8px;">SIMULATION PAUSED</h2>
+            <div class="cyber-subtitle">TACTICAL RICOCHET PROTOCOL SUSPENDED</div>
+            <div class="cyber-btn-group" style="width: 280px; margin: 24px auto 0 auto;">
+                <button id="btn-resume-game" class="cyber-btn">RESUME MISSION</button>
+                <button id="btn-pause-store" class="cyber-btn">WEAPON ARMORY</button>
+                <button id="btn-pause-restart" class="cyber-btn btn-crimson">RESTART SECTOR</button>
+                <button id="btn-pause-menu" class="cyber-btn">ABORT TO MENU</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. WEAPON STORE MODAL -->
+    <div id="store-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card">
+            <div class="store-header-bar">
+                <h2 style="font-size: 24px; letter-spacing: 3px; color: #00F0FF;">CYBERNETIC WEAPON ARMORY</h2>
+                <div id="store-tokens" class="store-balance-tag">BALANCE: 0 TOKENS</div>
+            </div>
+            <div id="store-cards" class="store-cards-grid"></div>
+            <button id="btn-close-store" class="cyber-btn" style="width: 220px; margin: 0 auto;">CLOSE ARMORY</button>
+        </div>
+    </div>
+
+    <!-- 3B. ARENA SELECTION MODAL -->
+    <div id="map-select-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card" style="max-width: 1060px; width: 95%; max-height: 92vh; overflow-y: auto;">
+            <div class="store-header-bar" style="margin-bottom: 16px;">
+                <div style="text-align: left;">
+                    <h2 style="font-size: 24px; letter-spacing: 3px; color: #00F0FF;">COMBAT ARENA SELECTION</h2>
+                    <div id="map-select-subtitle" style="font-size: 12px; letter-spacing: 1.5px; color: #88aacc; margin-top: 4px;">
+                        IMMEDIATE UNRESTRICTED ACCESS // CHOOSE COMBAT SECTOR
+                    </div>
+                </div>
+                <div id="map-modal-progress" style="font-size: 13px; font-weight: bold; color: #00FF88; letter-spacing: 1px; text-shadow: 0 0 8px rgba(0,255,136,0.5);">
+                    ALL SECTORS UNLOCKED
+                </div>
+            </div>
+
+            <!-- Visual Theme Switcher Bar -->
+            <div class="theme-preset-bar">
+                <div style="text-align: left;">
+                    <div style="font-size: 11px; font-weight: bold; letter-spacing: 2px; color: #88aacc;">
+                        VISUAL PRESET // AESTHETIC THEME
+                    </div>
+                    <div id="active-theme-desc" style="font-size: 11px; color: #00F0FF; margin-top: 2px; letter-spacing: 0.5px;">
+                        DEFAULT (MAP SIGNATURE PRESET)
+                    </div>
+                </div>
+                <div id="theme-pills-container" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+            </div>
+
+            <div id="map-cards-container" class="map-cards-grid"></div>
+
+            <div style="display: flex; justify-content: flex-end; align-items: center; border-top: 1px solid rgba(0, 240, 255, 0.25); padding-top: 16px; margin-top: 16px; gap: 14px;">
+                <button id="btn-cancel-map-select" class="cyber-btn" style="width: 180px; border-color: #88aacc; color: #88aacc;">
+                    BACK TO MENU
+                </button>
+                <button id="btn-close-map-select" class="cyber-btn" style="width: 220px;">
+                    CONFIRM & DEPLOY
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. LEVEL COMPLETE OVERLAY -->
+    <div id="level-complete-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card">
+            <h2 id="level-complete-title" style="font-size: 36px; letter-spacing: 4px; color: #00F0FF; margin-bottom: 8px;">SECTOR CLEARED</h2>
+            <div id="level-complete-subtitle" class="cyber-subtitle">All active hostiles neutralized via ricochet bank shots.</div>
+            <div id="level-tokens-earned" style="font-size: 20px; font-weight: bold; color: #FFD700; margin-bottom: 28px;">TOKENS HARVESTED: +150 🪙</div>
+            <div class="cyber-btn-group">
+                <button id="btn-next-level" class="cyber-btn">PROCEED TO NEXT SECTOR</button>
+                <button id="btn-level-store" class="cyber-btn">UPGRADE IN ARMORY</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. GAME OVER OVERLAY -->
+    <div id="game-over-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card">
+            <h2 style="font-size: 40px; letter-spacing: 4px; color: #FF0D47; margin-bottom: 8px;">MISSION FAILED</h2>
+            <div class="cyber-subtitle">Player chassis destroyed. Direct shots do zero damage. Bank off walls!</div>
+            <div id="game-over-score" style="font-size: 20px; color: #d0e4f0; margin-bottom: 24px;">FINAL SCORE: 0</div>
+            <div class="cyber-btn-group">
+                <button id="btn-restart-level" class="cyber-btn btn-crimson">RESTART SECTOR</button>
+                <button id="btn-game-over-menu" class="cyber-btn">RETURN TO MENU</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. CAMPAIGN VICTORY OVERLAY -->
+    <div id="campaign-victory-modal" class="cyber-modal-overlay" style="display: none;">
+        <div class="cyber-card">
+            <h2 style="font-size: 38px; letter-spacing: 4px; color: #00F0FF; margin-bottom: 8px;">ALL SECTORS SECURED</h2>
+            <div class="cyber-subtitle">You have mastered the Ricochet Protocol and cleared the Citadel.</div>
+            <div id="campaign-final-score" style="font-size: 20px; color: #FFD700; margin-bottom: 28px;">FINAL SCORE: 0</div>
+            <button id="btn-play-again" class="cyber-btn" style="width: 240px; margin: 0 auto;">PLAY CAMPAIGN AGAIN</button>
+        </div>
+    </div>
+
+    <!-- IN-GAME HUD -->
+    <div id="hud-root">
+        <!-- Top Left: Sector, Targets, Tokens -->
+        <div class="level-status-panel">
+            <div id="hud-sector-text" class="sector-title">SECTOR 01: TRAINING GROUNDS</div>
+            <div id="hud-targets-text" class="targets-badge">TARGETS: 3 REMAINING</div>
+            <div id="hud-tokens-text" class="tokens-badge">TOKENS: 50</div>
+        </div>
+
+        <!-- Center Reticle -->
+        <div class="crosshair-container">
+            <div id="crosshair" class="crosshair normal">
+                <div class="dot"></div>
+                <div class="tick top"></div>
+                <div class="tick bottom"></div>
+                <div class="tick left"></div>
+                <div class="tick right"></div>
+            </div>
+            <div id="prediction-label">⚡ RICOCHET LETHAL LOCKED</div>
+        </div>
+
+        <div class="banner-container">
+            <div id="banner-text" class="banner-text">BANK SHOT! +100</div>
+            <div id="style-tricks-feed" class="style-tricks-feed"></div>
+        </div>
+
+        <!-- Bottom Left: Vitals & Focus Reflex -->
+        <div class="vitals-panel">
+            <div class="health-text" id="health-text">HP: 100 / 100</div>
+            <div class="health-bar-bg">
+                <div class="health-fill" id="health-fill"></div>
+            </div>
+            <div class="focus-text" id="focus-text">FOCUS // BULLET TIME: 100% [RMB]</div>
+            <div class="focus-bar-bg">
+                <div class="focus-fill" id="focus-fill"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Right: Ammo & Equipped Weapon -->
+        <div class="ammo-panel">
+            <div id="weapon-name-label" class="weapon-name-badge">SPECTRE-9 RICOCHET PISTOL</div>
+            <div class="ammo-text" id="ammo-text">6 / 6</div>
+            <div class="ammo-subtext" id="ammo-subtext">RICOCHET ROUNDS</div>
+        </div>
+
+        <!-- Top Right: Score & Style Rank System -->
+        <div class="score-panel">
+            <div class="score-text" id="score-text">SCORE: 0</div>
+            
+            <div id="style-panel" class="style-panel">
+                <div class="style-rank-row">
+                    <div id="style-rank-badge" class="style-rank-badge rank-d">D</div>
+                    <div class="style-rank-info">
+                        <div id="style-rank-title" class="style-rank-title">DEFLECTOR</div>
+                        <div id="style-multiplier" class="style-multiplier">x1.0 MULTIPLIER</div>
+                    </div>
+                </div>
+                <div class="style-bar-bg">
+                    <div id="style-bar-fill" class="style-bar-fill"></div>
+                </div>
+            </div>
+
+            <div class="combo-container" id="combo-container">
+                <div class="combo-text" id="combo-text">COMBO: x1.0</div>
+                <div class="combo-bar-bg">
+                    <div class="combo-fill" id="combo-fill"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Production-Ready Single Self-Contained Bundle with Modular Dev Fallback -->
+    <script src="./bundle.js"></script>
+    <script type="module">
+        // If bundle.js is not present or blocked, load the ES module architecture
+        if (!window.game) {
+            import('./src/game.js').catch(err => {
+                console.warn('[Modular Loader] Fallback to ./src/game.js failed:', err);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "bounce-kill",
+  "version": "1.0.0",
+  "description": "3D Tactical Ricochet Shooter",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "serve": "node server.js",
+    "py": "python3 serve.py"
+  },
+  "keywords": [
+    "threejs",
+    "webgl",
+    "tactical-shooter",
+    "ricochet",
+    "fps"
+  ],
+  "author": "",
+  "license": "ISC"
+}
